@@ -253,6 +253,7 @@ def plot_vol_and_variance_surface(folder, year, quote_date, df, k_grid, T_grid, 
 
     plt.tight_layout()
     plt.savefig(f"{folder}/{year}/vol_and_variance_surface_{quote_date}.png")
+    plt.close()
     # plt.show()
 
 
@@ -315,6 +316,7 @@ def plot_total_var_grid(folder, year, quote_date, df_quote_date, k_grid, T_grid,
 
     plt.tight_layout()
     plt.savefig(f"{folder}/{year}/total_variance_surface_{quote_date}.png")
+    plt.close()
     # plt.show()
 
 
@@ -377,6 +379,7 @@ def plot_vol_grid(folder, year, quote_date, df_quote_date, k_grid, T_grid, vol_g
 
     plt.tight_layout()
     plt.savefig(f"{folder}/{year}/vol_surface_{quote_date}.png")
+    plt.close()
 
 def process_var_to_grid(folder, year, k_grid, T_grid):
     df = pd.read_csv(f"{folder}/processed_data_{year}.csv", skipinitialspace=True)
@@ -481,7 +484,7 @@ def post_process_grid_data(folder, year, k_grid, T_grid):
             print(f"Pricing test failed for total variance surface on quote date {quote_date}, skipping saving post total var grid data")
     '''
 
-    print(f"var arb: {var_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
+    print(f"var arb:{var_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
     print(f"vol arb: {vol_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
     return var_arb_date_count, vol_arb_date_count
 
@@ -521,7 +524,7 @@ def get_grid_data(folder, years, label, bad_dates=[]):
 
             # all_w_grid.append(total_var_grid)
             # all_quote_dates.append(quote_date)
-            grid_dict[quote_date] = np.array(grid)
+            grid_dict[ quote_date] = np.array(grid)
 
 
     # At the end of the function, return both the lists and dictionary

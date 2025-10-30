@@ -31,7 +31,7 @@ def main():
         "2023q2",  # done
         "2023q3",  # done
         "2023q4",  # done
-    ][-14:-1]:
+    ][-14:-2]:
         if 0:
             k_grid = np.linspace(-0.3, 0.3, 41)
             T_grid = np.linspace(0.05, 1.0, 20)
@@ -42,7 +42,8 @@ def main():
             # load_and_process_data(folder, year)
 
             # 2. process vol to grid
-            #process_var_to_grid(folder, year, k_grid, T_grid)
+            # process_volatility_surface(folder, year)
+            # process_var_to_grid(folder, year, k_grid, T_grid)
 
             # post processing of the vol grid data, more intense pricing test
             # Remove existing post_*.npz files before post processing
@@ -87,7 +88,7 @@ def main():
         "2023q2",  # done
         "2023q3",  # done
         "2023q4",  # done
-    ][-14:]
+    ][-14:-2]
 
     """
     bad_dates_per_year = {

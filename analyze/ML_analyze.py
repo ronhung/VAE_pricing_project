@@ -3,6 +3,18 @@ import pandas as pd
 import numpy as np
 
 
+def unflatten_grid(flattened_grid, k_grid, T_grid):
+    k_unique = np.unique(k_grid)
+    T_unique = np.unique(T_grid)
+    grid_2d = np.zeros((len(T_unique), len(k_unique)))
+
+    for i, t in enumerate(T_unique):
+        for j, k in enumerate(k_unique):
+            idx = np.where((np.isclose(T_grid, t)) & (np.isclose(k_grid, k)))[0]
+            if len(idx) > 0:
+                grid_2d[i, j] = flattened_grid[idx[0]]
+
+    return grid_2d, k_unique, T_unique
 
 def profile_likelihood_dim(s, eps=1e-12):
     """
