@@ -11,7 +11,7 @@ def main():
     label = "post_vol_"
 
 
-    if 1:
+    if 0:
         print("Generating American Put training data...")
         N_data = 20000
         #N_data = 20000
@@ -26,7 +26,7 @@ def main():
         vol_data_path = f"../data_process/data_pack/{label}grid_{type}.npz"
         generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_type=type)
 
-    if 0:
+    if 1:
         print("Generating Asian Option training data...")
         N_data = 100
         vol_data_path = f"../data_process/data_pack/{label}grid_train.npz"
