@@ -6,13 +6,13 @@ from american_put_pricer import read_vol_data
 # TODO: implement the Asian option pricer
 
 
-def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs):
+def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs, S0): # <--- 3. 接收 S0
     """
     input: 1. (quote date, vol_surface), n (K,T)
     output: n NPV of Asian options
     """
     # some constants
-    S0 = 1.0
+    # S0 = 1.0 # <--- 4. 刪除硬編碼
     r = 0.02
     q = 0.0
 
@@ -84,7 +84,7 @@ def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KT
 def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_type="train"):
 
     # 1. read all vol data
-    data, quote_dates, vol_surfaces, K_grid, T_grid = read_vol_data(vol_data_path, label)
+    data, quote_dates, vol_surfaces, K_grid, T_grid, S0s = read_vol_data(vol_data_path, label) # <--- 5. 接收 S0s
     """
     data prepared
     k_grid = np.linspace(-0.3, 0.3, 41)
@@ -99,8 +99,8 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
         n_per_date[i] += 1
     print("n_per_date", n_per_date)
 
-    all_AsianC_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": []}
-    all_AsianP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": []}
+    all_AsianC_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []} # <--- 6. 新增 S0 欄位
+    all_AsianP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []} # <--- 6. 新增 S0 欄位
     arb_date = []
 
     # Set random seed for reproducible sampling
@@ -118,9 +118,10 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
         if n_per_date[i] == 0:
             continue
         print(f"Evaluating {n_per_date[i]} (K,T) for quote date {quote_dates[i]}")
+        S0_for_date = S0s[i] # <--- 7. 取得當天的 S0
 
         try:
-            AsianC_NPVs, AsianP_NPVs = price_asian_option_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs)
+            AsianC_NPVs, AsianP_NPVs = price_asian_option_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs, S0_for_date) # <--- 8. 傳入 S0
         except Exception as e:
             print(f"Error pricing Asian options for quote date {quote_dates[i]}: {e}")
             arb_date.append(quote_dates[i])
@@ -134,12 +135,14 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
             all_AsianC_NPVS_data["K"].append(eval_KTs[j][0])
             all_AsianC_NPVS_data["T"].append(eval_KTs[j][1])
             all_AsianC_NPVS_data["NPV"].append(AsianC_NPVs[j])
+            all_AsianC_NPVS_data["S0"].append(S0_for_date) # <--- 9. 儲存 S0
 
             all_AsianP_NPVS_data["quote_date"].append(quote_dates[i])
             all_AsianP_NPVS_data["vol_surface"].append(vol_surfaces[i])
             all_AsianP_NPVS_data["K"].append(eval_KTs[j][0])
             all_AsianP_NPVS_data["T"].append(eval_KTs[j][1])
             all_AsianP_NPVS_data["NPV"].append(AsianP_NPVs[j])
+            all_AsianP_NPVS_data["S0"].append(S0_for_date) # <--- 9. 儲存 S0
     print(f"Processed {len(all_AsianC_NPVS_data['NPV'])} Asian Call options and {len(all_AsianP_NPVS_data['NPV'])} Asian Put options.")
     print("error quote dates:", arb_date)
 
@@ -151,6 +154,7 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
         K=all_AsianC_NPVS_data["K"],
         T=all_AsianC_NPVS_data["T"],
         NPV=all_AsianC_NPVS_data["NPV"],
+        UNDERLYING_LAST=all_AsianC_NPVS_data["S0"], # <--- 10. 存入 NPZ
     )
     print(f"Asian Call data with {N_data} samples saved to {folder}/AsianCall_pricing_data_{dataset_type}.npz")
 
@@ -161,5 +165,6 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
         K=all_AsianP_NPVS_data["K"],
         T=all_AsianP_NPVS_data["T"],
         NPV=all_AsianP_NPVS_data["NPV"],
+        UNDERLYING_LAST=all_AsianP_NPVS_data["S0"], # <--- 10. 存入 NPZ
     )
     print(f"Asian Put data with {N_data} samples saved to {folder}/AsianPut_pricing_data_{dataset_type}.npz")

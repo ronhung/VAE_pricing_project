@@ -90,6 +90,7 @@ class PricingDataset(Dataset):
             self.vol_surfaces = pricing_data["vol_surfaces"]
             self.price_params = np.column_stack((pricing_data["K"], pricing_data["T"]))
             self.prices = pricing_data["NPV"]
+            self.spot_prices = pricing_data["UNDERLYING_LAST"] # <--- 1. 讀取 S0
         else:
             raise ValueError(f"Unsupported product type: {product_type}")
 
@@ -109,9 +110,13 @@ class PricingDataset(Dataset):
             self.price_params_std = np.std(self.price_params, axis=0)
             self.price_mean = np.mean(self.prices)
             self.price_std = np.std(self.prices)
+            self.spot_mean = np.mean(self.spot_prices) # <--- 2. 計算 S0 統計
+            self.spot_std = np.std(self.spot_prices)   # <--- 2. 計算 S0 統計
+
             price_param_stats = {
                 "params_mean": self.price_params_mean, "params_std": self.price_params_std,
                 "price_mean": self.price_mean, "price_std": self.price_std,
+                "spot_mean": self.spot_mean, "spot_std": self.spot_std, # <--- 3. 儲存 S0 統計
             }
             np.savez(param_stats_path, **price_param_stats)
         else:
@@ -121,15 +126,20 @@ class PricingDataset(Dataset):
                 self.price_params_std = stats["params_std"]
                 self.price_mean = stats["price_mean"]
                 self.price_std = stats["price_std"]
+                self.spot_mean = stats.get("spot_mean", np.mean(self.spot_prices)) # <--- 4. 載入 S0 統計 (兼容舊檔)
+                self.spot_std = stats.get("spot_std", np.std(self.spot_prices))   # <--- 4. 載入 S0 統計 (兼容舊檔)
             else:
                 warnings.warn(f"No pricing parameter stats found at {param_stats_path}, computing from current data")
                 self.price_params_mean = np.mean(self.price_params, axis=0)
                 self.price_params_std = np.std(self.price_params, axis=0)
                 self.price_mean = np.mean(self.prices)
                 self.price_std = np.std(self.prices)
+                self.spot_mean = np.mean(self.spot_prices) # <--- 4. (Fallback)
+                self.spot_std = np.std(self.spot_prices)   # <--- 4. (Fallback)
 
         self.price_params = (self.price_params - self.price_params_mean) / self.price_params_std
         self.prices = (self.prices - self.price_mean) / self.price_std
+        self.spot_prices = (self.spot_prices - self.spot_mean) / self.spot_std # <--- 5. 標準化 S0
 
     def __len__(self):
         return len(self.quote_dates)
@@ -137,8 +147,9 @@ class PricingDataset(Dataset):
     def __getitem__(self, idx):
         vol_surface = torch.from_numpy(self.vol_surfaces[idx]).float().unsqueeze(0)  # add channel dimension
         pricing_param = torch.tensor(self.price_params[idx], dtype=torch.float32)
+        spot_price = torch.tensor(self.spot_prices[idx], dtype=torch.float32).unsqueeze(0) # <--- 6. 取得 S0
         price = torch.tensor(self.prices[idx], dtype=torch.float32).unsqueeze(0)  # make it (1,) for consistency
-        return vol_surface, pricing_param, price
+        return vol_surface, pricing_param, spot_price, price # <--- 7. 回傳 4 個項目
 
 
 def create_pricing_dataloader(folder, label, data_type, batch_size=32, shuffle=True, compute_stats=False):
@@ -270,21 +281,23 @@ class PricerTransformer(nn.Module):
     Pricer 模型，使用 *固定* 的 TransformerAutoencoder 進行降維。
     """
     def __init__(self, 
-                 latent_dim: int, 
-                 pricing_param_dim: int, 
-                 tae_model_path: str,
-                 # TAE 模型的架構參數 (必須與訓練時完全一致)
-                 input_dim: int = 20, 
-                 seq_len: int = 41,
-                 d_model: int = 64, 
-                 nhead: int = 4, 
-                 num_encoder_layers: int = 3, 
-                 num_decoder_layers: int = 3, 
-                 dim_feedforward: int = 128
-                 ):
+                latent_dim: int, 
+                pricing_param_dim: int, 
+                tae_model_path: str,
+                spot_param_dim: int = 1, # <--- 1. 新增 S0 維度
+                # TAE 模型的架構參數 (必須與訓練時完全一致)
+                input_dim: int = 20, 
+                seq_len: int = 41,
+                d_model: int = 64, 
+                nhead: int = 4, 
+                num_encoder_layers: int = 3, 
+                num_decoder_layers: int = 3, 
+                dim_feedforward: int = 128
+                ):
         super().__init__()
         self.latent_dim = latent_dim
         self.pricing_param_dim = pricing_param_dim
+        self.spot_param_dim = spot_param_dim # <--- 2. 儲存 S0 維度
 
         # 1. 加載預訓練的 TransformerAutoencoder (TAE)
         self.tae_model = TransformerAutoencoder(
@@ -297,7 +310,7 @@ class PricerTransformer(nn.Module):
             num_decoder_layers=num_decoder_layers,
             dim_feedforward=dim_feedforward
         )
-        
+
         # 加載狀態字典
         try:
             self.tae_model.load_state_dict(torch.load(tae_model_path))
@@ -307,7 +320,7 @@ class PricerTransformer(nn.Module):
         except RuntimeError as e:
             print(f"Error loading TAE state_dict. Did architecture change? {e}")
             raise
-            
+
         # 2. **凍結 TAE 的參數**
         self.tae_model.eval()
         for param in self.tae_model.parameters():
@@ -315,7 +328,7 @@ class PricerTransformer(nn.Module):
 
         # 3. Pricer MLP (與 PricerPCA/LDA 相同)
         self.pricing_mlp = nn.Sequential(
-            nn.Linear(latent_dim + pricing_param_dim, 16),
+            nn.Linear(latent_dim + pricing_param_dim + spot_param_dim, 16), # <--- 3. 新的輸入維度
             nn.ReLU(),
             nn.Linear(16, 16),
             nn.ReLU(),
@@ -324,20 +337,20 @@ class PricerTransformer(nn.Module):
             nn.Linear(16, 1),
         )
 
-    def forward(self, vol_surface: torch.Tensor, pricing_params: torch.Tensor) -> torch.Tensor:
+    def forward(self, vol_surface: torch.Tensor, pricing_params: torch.Tensor, spot_params: torch.Tensor) -> torch.Tensor: # <--- 4. 接收 S0
         # 1. 使用 TAE Encoder 轉換波動率曲面
         # 在 no_grad 上下文中執行，因為 TAE 已被凍結
         with torch.no_grad():
             z = self.tae_model.encode(vol_surface) 
 
         # 2. 串聯潛在向量和定價參數
-        mlp_input = torch.cat([z, pricing_params], dim=1)
+        mlp_input = torch.cat([z, pricing_params, spot_params], dim=1) # <--- 5. 串聯 S0
 
         # 3. 通過 MLP 進行定價
         price_pred = self.pricing_mlp(mlp_input)
-        
+
         return price_pred
-    
+        
 # --------------------------
 # Training Functions (TAE)
 # --------------------------
@@ -498,6 +511,7 @@ def train_and_save_pricer_TAE(
     model = PricerTransformer(
         latent_dim=latent_dim, 
         pricing_param_dim=pricing_param_dim, 
+        spot_param_dim=1, # <--- 1. 傳入 S0 維度
         tae_model_path=tae_model_path
         # 使用默認的 TAE 架構參數
     ).to(device)
@@ -509,18 +523,19 @@ def train_and_save_pricer_TAE(
     train_losses, test_losses = [], []
 
     print("--- 開始訓練 Pricer (TAE) ---")
-    
+
     for epoch in range(num_epochs):
         model.train() # 只會啟用 MLP 的 train mode
         total_train_loss = 0.0
 
-        for vol_surface, pricing_params, target_prices in train_loader:
+        for vol_surface, pricing_params, spot_params, target_prices in train_loader: # <--- 2. 解開 4 個項目
             vol_surface = vol_surface.to(device)
             pricing_params = pricing_params.to(device)
+            spot_params = spot_params.to(device) # <--- 3. S0 傳到 device
             target_prices = target_prices.to(device)
 
             # Forward pass
-            predicted_prices = model(vol_surface, pricing_params)
+            predicted_prices = model(vol_surface, pricing_params, spot_params) # <--- 4. 傳入 S0
 
             # Compute loss
             loss = F.mse_loss(predicted_prices, target_prices)
@@ -541,12 +556,13 @@ def train_and_save_pricer_TAE(
         model.eval()
         total_test_loss = 0.0
         with torch.no_grad():
-            for vol_surface_test, pricing_params_test, target_prices_test in test_loader:
+            for vol_surface_test, pricing_params_test, spot_params_test, target_prices_test in test_loader: # <--- 5. 解開 4 個項目
                 vol_surface_test = vol_surface_test.to(device)
                 pricing_params_test = pricing_params_test.to(device)
+                spot_params_test = spot_params_test.to(device) # <--- 6. S0 傳到 device
                 target_prices_test = target_prices_test.to(device)
 
-                predicted_prices_test = model(vol_surface_test, pricing_params_test)
+                predicted_prices_test = model(vol_surface_test, pricing_params_test, spot_params_test) # <--- 7. 傳入 S0
                 loss_test = F.mse_loss(predicted_prices_test, target_prices_test)
                 total_test_loss += loss_test.item() * vol_surface_test.size(0)
 
@@ -558,7 +574,7 @@ def train_and_save_pricer_TAE(
     # 保存模型狀態 (只保存 MLP 的權重) 和損失歷史
     state_path = os.path.join(folder, f"{product_type}_pricer_tae_state_dict.pt")
     torch.save(model.state_dict(), state_path)
-    
+
     np.save(os.path.join(folder, f"{product_type}_pricer_tae_train_losses.npy"), np.array(train_losses))
     np.save(os.path.join(folder, f"{product_type}_pricer_tae_test_losses.npy"), np.array(test_losses))
 
@@ -566,7 +582,6 @@ def train_and_save_pricer_TAE(
     print(f"Saved pricer (TAE) train/test losses to {folder}")
 
     return model, train_losses, test_losses
-
 
 # --------------------------
 # Plotting Functions (TAE)
@@ -815,6 +830,7 @@ def plot_predict_prices_from_vol_surface_and_params_TAE(
     model = PricerTransformer(
         latent_dim=latent_dim, 
         pricing_param_dim=pricing_param_dim, 
+        spot_param_dim=1, # <--- 1. 傳入 S0 維度
         tae_model_path=tae_model_path
     )
     # 現在加載 Pricer (MLP) 的權重
@@ -840,21 +856,22 @@ def plot_predict_prices_from_vol_surface_and_params_TAE(
 
         print(f"Running predictions on {len(dataset)} {data_type} samples...")
         with torch.no_grad():
-            for vol_surface, pricing_param, target_price in loader:
+            for vol_surface, pricing_param, spot_param, target_price in loader: # <--- 2. 解開 4 個項目
                 vol_surface = vol_surface.to(device)
                 pricing_param = pricing_param.to(device)
+                spot_param = spot_param.to(device) # <--- 3. S0 傳到 device
                 target_price = target_price.to(device)
-                predicted_price = model(vol_surface, pricing_param)
+                predicted_price = model(vol_surface, pricing_param, spot_param) # <--- 4. 傳入 S0
                 predicted_prices_list.append(predicted_price.cpu().numpy())
                 target_prices_list.append(target_price.cpu().numpy())
 
         predicted_prices = np.concatenate(predicted_prices_list, axis=0)
         target_prices = np.concatenate(target_prices_list, axis=0)
-        
+
         # Denormalize
         predicted_prices_denorm = predicted_prices * price_std + price_mean
         target_prices_denorm = target_prices * price_std + price_mean
-        
+
         # Metrics
         mse = np.mean((predicted_prices_denorm - target_prices_denorm) ** 2)
         mae = np.mean(np.abs(predicted_prices_denorm - target_prices_denorm))
@@ -887,7 +904,7 @@ def plot_predict_prices_from_vol_surface_and_params_TAE(
         result = results[data_type]
         predicted_flat = result['predicted_prices'].flatten()
         target_flat = result['target_prices'].flatten()
-        
+
         ax_scatter = axes[i, 0]
         ax_scatter.scatter(target_flat, predicted_flat, alpha=0.6, s=20, label=f"{data_type} data")
         # ... (plot perfect line) ...
@@ -917,5 +934,5 @@ def plot_predict_prices_from_vol_surface_and_params_TAE(
     plt.savefig(f"{folder}/{product_type}_pricer_tae_prediction_comparison.png", dpi=300)
     plt.show()
     plt.close()
-    
+
     return results

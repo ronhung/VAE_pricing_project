@@ -26,18 +26,16 @@ def read_vol_data(path, label):
     else:
         raise ValueError("Unsupported label. Use 'vol_' or 'total_var_'.")
 
-    return data, quote_dates, vol_surfaces, K_grid, T_grid
+    S0s = data["S0s"] # <--- 1. 讀取 S0s
+    return data, quote_dates, vol_surfaces, K_grid, T_grid, S0s # <--- 2. 回傳 S0s
 
-    # data, quote_dates, vol_surfaces, K_grid, T_grid = read_vol_data("../data_process/data_pack/SPX_vol_surface_train.npz")
-
-
-def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs):
+def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs, S0): # <--- 3. 接收 S0
     """
     input: 1. (quote date, vol_surface), n (K,T)
     output: n NPV of american put options
     """
     # some constants
-    S0 = 1.0
+    # S0 = 1.0 # <--- 4. 刪除硬編碼
     r = 0.02
     q = 0.0
     # K_grid is 41
@@ -104,7 +102,7 @@ def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid,
 def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_type="test"):
 
     # 1. read all vol data
-    data, quote_dates, vol_surfaces, K_grid, T_grid = read_vol_data(vol_data_path, label)
+    data, quote_dates, vol_surfaces, K_grid, T_grid, S0s = read_vol_data(vol_data_path, label) # <--- 5. 接收 S0s
     """
     data prepared
     k_grid = np.linspace(-0.3, 0.3, 41)
@@ -118,7 +116,7 @@ def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_
         n_per_date[i] += 1
     print("n_per_date", n_per_date)
 
-    all_AmericanP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": []}
+    all_AmericanP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []} # <--- 6. 新增 S0 欄位
     arb_date = []
 
     # Set random seed for reproducible sampling (same as in test_pricing_arbitrage_free_surface)
@@ -131,29 +129,17 @@ def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_
 
         eval_Ks = np.random.uniform(K_min, K_max, size=n_per_date[i])
         eval_Ts = np.random.uniform(T_min, T_max, size=n_per_date[i])
-        """
-        if dataset_type == "train":
 
-
-        elif dataset_type == "test":
-            K_mid = (K_min + K_max) / 2
-            K_half_range = (K_max - K_min) * 0.45
-            eval_Ks = np.random.uniform(K_mid - K_half_range, K_mid + K_half_range, size=n_per_date[i])
-
-            T_mid = (T_min + T_max) / 2
-            T_half_range = (T_max - T_min) * 0.45
-            eval_Ts = np.random.uniform(T_mid - T_half_range, T_mid + T_half_range, size=n_per_date[i])
-        """
+        # ... (此處省略了註解掉的 if/elif dataset_type 區塊) ...
 
         eval_KTs = [[K, T] for K, T in zip(eval_Ks, eval_Ts)]
         if n_per_date[i] == 0:
             continue
         print(f"Evaluating {n_per_date[i]} (K,T) for quote date {quote_dates[i]}")
-        # print("eval_Ks", eval_Ks)
-        # print("eval_Ts", eval_Ts)
-        # print("eval_KTs", eval_KTs)
+        S0_for_date = S0s[i] # <--- 7. 取得當天的 S0
+
         try:
-            AmericanP_NPVS = price_american_put_options_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs)
+            AmericanP_NPVS = price_american_put_options_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs, S0_for_date) # <--- 8. 傳入 S0
         except Exception as e:
             print(f"Error processing quote date {quote_dates[i]}: {e}")
             arb_date.append(quote_dates[i])
@@ -165,6 +151,7 @@ def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_
             all_AmericanP_NPVS_data["K"].append(eval_KTs[j][0])
             all_AmericanP_NPVS_data["T"].append(eval_KTs[j][1])
             all_AmericanP_NPVS_data["NPV"].append(AmericanP_NPVS[j])
+            all_AmericanP_NPVS_data["S0"].append(S0_for_date) # <--- 9. 儲存 S0
     print(f"Processed {len(all_AmericanP_NPVS_data['quote_date'])} American put options.")
     print("error dates:", len(arb_date), arb_date)
 
@@ -176,6 +163,7 @@ def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_
         K=all_AmericanP_NPVS_data["K"],
         T=all_AmericanP_NPVS_data["T"],
         NPV=all_AmericanP_NPVS_data["NPV"],
+        UNDERLYING_LAST=all_AmericanP_NPVS_data["S0"], # <--- 10. 存入 NPZ
     )
     print(f"American put data with {N_data} samples saved to {folder}/AmericanPut_pricing_data_{dataset_type}.npz")
     return 0

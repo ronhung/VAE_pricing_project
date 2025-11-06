@@ -394,6 +394,7 @@ def process_var_to_grid(folder, year, k_grid, T_grid):
         #    continue  # for debugging
         print(f"Griding vol surface for quote date: {quote_date}")
         df_quote_date = pd.read_csv(f"{folder}/{year}/volatility_surface_{quote_date}.csv")
+        S0_for_date = df_quote_date["UNDERLYING_LAST"].iloc[0] # <--- 1. 提取 S0
 
         # simple grid
         total_var_grid = grid_total_variance(df_quote_date, k_grid, T_grid)
@@ -408,7 +409,7 @@ def process_var_to_grid(folder, year, k_grid, T_grid):
         if testpass:
             plot_total_var_grid(folder, year, quote_date, df_quote_date, k_grid, T_grid, total_var_grid)
             total_var_grid_data_npz = {"k_grid": k_grid, "T_grid": T_grid, "total_var_grid": total_var_grid}
-            np.savez(f"{folder}/{year}/total_var_grid_data_{quote_date}.npz", **total_var_grid_data_npz)
+            # np.savez(f"{folder}/{year}/total_var_grid_data_{quote_date}.npz", **total_var_grid_data_npz) # 舊的
         else:
             var_arb_date_count += 1
             print(f"Pricing test failed for quote date {quote_date}, skipping saving total var grid data")
@@ -418,8 +419,9 @@ def process_var_to_grid(folder, year, k_grid, T_grid):
         vol_test_pass = test_pricing_arbitrage_free_surface(quote_date, vol_grid, k_grid, T_grid)
         if vol_test_pass:
             plot_vol_grid(folder, year, quote_date, df_quote_date, k_grid, T_grid, vol_grid)
-            vol_grid_data_npz = {"k_grid": k_grid, "T_grid": T_grid, "vol_grid": vol_grid}
-            np.savez(f"{folder}/{year}/vol_grid_data_{quote_date}.npz", **vol_grid_data_npz)
+            # <--- 2. 新增 S0 到儲存字典
+            vol_grid_data_npz = {"k_grid": k_grid, "T_grid": T_grid, "vol_grid": vol_grid, "S0": S0_for_date} 
+            np.savez(f"{folder}/{year}/vol_grid_data_{quote_date}.npz", **vol_grid_data_npz) # <--- 3. 儲存
         else:
             vol_arb_date_count += 1
             print(f"Pricing test failed for vol surface on quote date {quote_date}, skipping saving vol grid data")
@@ -440,7 +442,6 @@ def process_var_to_grid(folder, year, k_grid, T_grid):
         """
     print(f"Total {var_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
     print(f"Total {vol_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
-
 
 def post_process_grid_data(folder, year, k_grid, T_grid):
     # further test the arbitrage free surface using massive pricing
@@ -521,10 +522,10 @@ def get_grid_data(folder, years, label, bad_dates=[]):
 
             k_grid = pd_vol_grid_data["k_grid"]
             T_grid = pd_vol_grid_data["T_grid"]
-
-            # all_w_grid.append(total_var_grid)
-            # all_quote_dates.append(quote_date)
-            grid_dict[ quote_date] = np.array(grid)
+            
+            # <--- 4. 將 S0 和 grid 一起儲存
+            S0 = pd_vol_grid_data["S0"].item() # .item() 轉為純量
+            grid_dict[quote_date] = {"grid": np.array(grid), "S0": S0}
 
 
     # At the end of the function, return both the lists and dictionary
@@ -548,9 +549,12 @@ def pack_grid_data_to_npz(folder, label, grid_dict, k_grid, T_grid,  train_ratio
     num_train = int(len(dates) * train_ratio)
     train_dates = dates[:num_train]
     test_dates = dates[num_train:]
+    
     # Create train and test dictionaries
-    train_grid_surfaces = [grid_dict[date] for date in train_dates]
-    test_grid_surfaces = [grid_dict[date] for date in test_dates]
+    train_grid_surfaces = [grid_dict[date]["grid"] for date in train_dates] # <--- 5. 提取 grid
+    train_S0s = [grid_dict[date]["S0"] for date in train_dates]           # <--- 6. 提取 S0
+    test_grid_surfaces = [grid_dict[date]["grid"] for date in test_dates]   # <--- 5. 提取 grid
+    test_S0s = [grid_dict[date]["S0"] for date in test_dates]             # <--- 6. 提取 S0
 
     print(f"Created train set with {len(train_dates)} samples and test set with {len(test_dates)} samples")
 
@@ -561,8 +565,21 @@ def pack_grid_data_to_npz(folder, label, grid_dict, k_grid, T_grid,  train_ratio
         surfaces_grid=train_grid_surfaces,
         k_grid=k_grid,
         T_grid=T_grid,
+        S0s=train_S0s, # <--- 7. 儲存 S0s
     )
     print(f"Saved train data to {folder}/{label}grid_train.npz")
+
+    # Save test data
+    np.savez(
+        f"{folder}/{label}grid_test.npz",
+        quote_dates=test_dates,
+        surfaces_grid=test_grid_surfaces,
+        k_grid=k_grid,
+        T_grid=T_grid,
+        S0s=test_S0s, # <--- 7. 儲存 S0s
+    )
+
+    print(f"Saved test data to {folder}/{label}grid_test.npz")
 
     # Save test data
     np.savez(
