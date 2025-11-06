@@ -25,7 +25,7 @@ def main():
             latent_dim=ld,
             num_epochs=100, # TAE 訓練 100 epochs
             batch_size=64, # Transformer 偏好稍大的 batch
-            lr=1e-4,
+            lr=9.59e-04,
             save_path=tae_model_path
         )
         plot_tae_loss_curves(folder) # 繪製 TAE 自身的損失曲線
