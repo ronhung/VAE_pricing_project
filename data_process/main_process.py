@@ -33,7 +33,6 @@ def main():
         "2023q4",  # done
     ][-14:-1]:
         if 1:
-            year = '2023q4'
             k_grid = np.linspace(-0.3, 0.3, 41)
             T_grid = np.linspace(0.05, 1.0, 20)
 
