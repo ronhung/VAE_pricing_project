@@ -286,7 +286,6 @@ class PricerTransformer(nn.Module):
     Pricer 模型，使用 *固定* 的 TransformerAutoencoder 進行降維。
     """
     def __init__(self, 
-<<<<<<< HEAD
                 latent_dim: int, 
                 pricing_param_dim: int, 
                 tae_model_path: str,
@@ -300,25 +299,6 @@ class PricerTransformer(nn.Module):
                 num_decoder_layers: int = 3, 
                 dim_feedforward: int = 128
                 ):
-=======
-                 latent_dim: int, 
-                 pricing_param_dim: int, 
-                 tae_model_path: str,
-                 # TAE 模型的架構參數 (必須與訓練時完全一致)
-                 input_dim: int = 20, 
-                 seq_len: int = 41,
-                #  d_model: int = 64, 
-                #  nhead: int = 4, 
-                #  num_encoder_layers: int = 3, 
-                #  num_decoder_layers: int = 3, 
-                #  dim_feedforward: int = 128
-                 d_model: int = 128,            # 必須與 TAE 一致
-                 nhead: int = 8,                # 必須與 TAE 一致
-                 num_encoder_layers: int = 4,   # 必須與 TAE 一致
-                 num_decoder_layers: int = 4,   # 必須與 TAE 一致
-                 dim_feedforward: int = 512     # 必須與 TAE 一致
-                 ):
->>>>>>> 6c701755d1c63a1c8575f4ee431cc6c972916833
         super().__init__()
         self.latent_dim = latent_dim
         self.pricing_param_dim = pricing_param_dim
