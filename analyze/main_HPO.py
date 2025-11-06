@@ -16,7 +16,8 @@ import numpy as np
 import os
 import optuna # 導入 Optuna
 from optuna.exceptions import TrialPruned # 用於剪枝
-
+from torch.utils.data import DataLoader, Subset
+from sklearn.model_selection import train_test_split # 導入分割工具
 # -------------------------------------------------------------------
 # 1. 從我們現有的 Transformer_model.py 中導入構建模塊
 #    (請確保此腳本與 Transformer_model.py 在同一資料夾中)
@@ -38,7 +39,7 @@ FOLDER = "../data_process/data_pack"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 64     # HPO 時可以使用稍大的 Batch Size
 N_EPOCHS_PER_TRIAL = 50 # 為了快速迭代，我們先用 50 epochs (之後可改回 100)
-N_TRIALS = 50       # 總共要嘗試 50 種不同的超參數組合
+N_TRIALS = 500       # 總共要嘗試 50 種不同的超參數組合
 
 
 # -------------------------------------------------------------------
@@ -51,10 +52,11 @@ def objective(trial: optuna.trial.Trial) -> float:
     Optuna 的目標函數。
     1. 建議一組超參數。
     2. 建立並訓練 TAE 模型。
-    3. 回傳最佳的 test_loss。
+    3. 回傳最佳的 *validation_loss*。 (已修正 Data Snooping)
     """
     
     # --- A. 定義超參數的「搜尋空間」 ---
+    # (這部分保持不變)
     
     # 1. 學習率 (log 尺度)
     lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
@@ -68,27 +70,38 @@ def objective(trial: optuna.trial.Trial) -> float:
 
     # 3. 檢查約束：nhead 必須能整除 d_model
     if d_model % nhead != 0:
-        # 如果不滿足，這是一個無效的組合
-        # 我們「剪枝」這個試驗，Optuna 會知道這是失敗的
         print(f"Pruning trial: d_model={d_model} % nhead={nhead} != 0")
         raise TrialPruned()
 
     print(f"\n--- [Trial {trial.number}] ---")
     print(f"Params: lr={lr:.2e}, d_model={d_model}, nhead={nhead}, num_layers={num_encoder_layers}, dim_ff={dim_feedforward}")
 
-    # --- B. 設置模型和數據 (與 train_and_save_TAE 類似) ---
+    # --- B. 設置模型和數據 (!!! 已修改：分割驗證集 !!!) ---
     
-    # 數據加載器
-    # 注意：我們在 HPO 期間不需要 compute_stats，假設它已經被 VAE 或 PCA 創建了
-    train_loader, _ = create_dataloader(FOLDER, "post_vol_", "train", batch_size=BATCH_SIZE, shuffle=True, compute_stats=False)
-    test_loader, _ = create_dataloader(FOLDER, "post_vol_", "test", batch_size=BATCH_SIZE, shuffle=False, compute_stats=False)
+    # 1. 加載「完整」的訓練數據集
+    #    (shuffle=False 確保每次 HPO 的分割都一致)
+    _, full_train_dataset = create_dataloader(FOLDER, "post_vol_", "train", batch_size=BATCH_SIZE, shuffle=False, compute_stats=False)
 
-    # 獲取形狀
+    # 2. 將「訓練集」分割為「新訓練集」(80%) 和「驗證集」(20%)
+    train_indices, val_indices = train_test_split(
+        range(len(full_train_dataset)), 
+        test_size=0.2, 
+        random_state=42 # 固定 random_state 確保可重現性
+    )
+    
+    train_subset = Subset(full_train_dataset, train_indices)
+    val_subset = Subset(full_train_dataset, val_indices)
+    
+    # 3. 創建新的 Dataloader
+    train_loader = DataLoader(train_subset, batch_size=BATCH_SIZE, shuffle=True)
+    validation_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False) # 驗證集不需要 shuffle
+
+    # 4. 獲取形狀 (從新的 train_loader)
     first_batch, _, _ = next(iter(train_loader))
     seq_len = first_batch.shape[2] # 41
     input_dim = first_batch.shape[3] # 20
     
-    # 根據建議的超參數建立模型
+    # 5. 根據建議的超參數建立模型 (與之前相同)
     model = TransformerAutoencoder(
         input_dim=input_dim,
         seq_len=seq_len,
@@ -103,12 +116,13 @@ def objective(trial: optuna.trial.Trial) -> float:
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=N_EPOCHS_PER_TRIAL, eta_min=lr * 0.01)
 
-    best_test_loss = float('inf')
+    best_validation_loss = float('inf') # (!!! 已修改 !!!)
 
-    # --- C. 訓練迴圈 ---
+    # --- C. 訓練迴圈 (!!! 已修改：使用驗證集 !!!) ---
     for epoch in range(N_EPOCHS_PER_TRIAL):
         model.train()
         total_train_loss = 0.0
+        # (訓練迴圈 ... 保持不變)
         for x, _, _ in train_loader:
             x = x.to(DEVICE)
             optimizer.zero_grad()
@@ -120,36 +134,38 @@ def objective(trial: optuna.trial.Trial) -> float:
             total_train_loss += loss.item() * x.size(0)
         
         scheduler.step()
-        avg_train_loss = total_train_loss / len(train_loader.dataset)
-
-        # 評估測試集
+        # avg_train_loss = total_train_loss / len(train_loader.dataset) # 應為 len(train_subset)
+        
+        # 評估「驗證集」 (!!! 已修改 !!!)
         model.eval()
-        total_test_loss = 0.0
+        total_validation_loss = 0.0
         with torch.no_grad():
-            for x_test, _, _ in test_loader:
-                x_test = x_test.to(DEVICE)
-                x_recon_test = model(x_test)
-                loss_test = F.mse_loss(x_recon_test, x_test)
-                total_test_loss += loss_test.item() * x_test.size(0)
+            for x_val, _, _ in validation_loader: # (!!! 已修改 !!!)
+                x_val = x_val.to(DEVICE)
+                x_recon_val = model(x_val)
+                loss_val = F.mse_loss(x_recon_val, x_val)
+                total_validation_loss += loss_val.item() * x_val.size(0)
         
-        avg_test_loss = total_test_loss / len(test_loader.dataset)
+        avg_validation_loss = total_validation_loss / len(val_subset) # (!!! 已修改 !!!)
         
-        if avg_test_loss < best_test_loss:
-            best_test_loss = avg_test_loss
+        if avg_validation_loss < best_validation_loss:
+            best_validation_loss = avg_validation_loss
         
-        print(f"Trial {trial.number}, Epoch {epoch+1}/{N_EPOCHS_PER_TRIAL} | test_loss={avg_test_loss:.6f}")
+        # (!!! 已修改 !!!)
+        print(f"Trial {trial.number}, Epoch {epoch+1}/{N_EPOCHS_PER_TRIAL} | val_loss={avg_validation_loss:.6f}")
 
-        # --- D. 關鍵的「剪枝」步驟 ---
-        # 1. 向 Optuna 報告目前 epoch 的 test_loss
-        trial.report(avg_test_loss, epoch)
+        # --- D. 關鍵的「剪枝」步驟 (!!! 已修改 !!!) ---
         
-        # 2. 檢查 Optuna 是否認為這個 trial 已經沒希望了
+        # 1. 向 Optuna 報告目前 epoch 的 *validation_loss*
+        trial.report(avg_validation_loss, epoch) # (!!! 已修改 !!!)
+        
+        # 2. 檢查 Optuna 是否認為这个 trial 已經沒希望了
         if trial.should_prune():
             print(f"Pruning trial {trial.number} at epoch {epoch+1} due to poor performance.")
             raise TrialPruned()
 
-    # 迴圈結束後，回傳此 trial 達到的「最佳 test_loss」
-    return best_test_loss
+    # 迴圈結束後，回傳此 trial 達到的「最佳 validation_loss」
+    return best_validation_loss # (!!! 已修改 !!!)
 
 # -------------------------------------------------------------------
 # 4. 主執行函數
