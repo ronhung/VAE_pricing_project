@@ -11,7 +11,7 @@ def main():
     label = "post_vol_"
 
 
-    if 0:
+    if 1:
         print("Generating American Put training data...")
         N_data = 20000
         #N_data = 20000

@@ -109,12 +109,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../pricing"))
 from american_put_pricer import price_american_put_options_multi_KT
 
 
-def test_pricing_arbitrage_free_surface(quote_date, vol_grid, k_grid, T_grid, N_sample=5):
+def test_pricing_arbitrage_free_surface(quote_date, vol_grid, k_grid, T_grid, S0_for_date, N_sample=5): # <--- 1. 接收 S0
     # sample some T and k within the grid range, and test pricing of American put
     # TODO:
     # 1. Find range of k and T
-    K_grid = np.exp(k_grid)
-    K_min, K_max = min(K_grid), max(K_grid)
+    K_grid_exp = np.exp(k_grid) # <--- 修正: 您的 K_grid 是 log-moneyness
+    K_min, K_max = min(K_grid_exp), max(K_grid_exp)
     T_min, T_max = min(T_grid), max(T_grid)
 
     # 2. Sample some k and T within the range
@@ -126,7 +126,8 @@ def test_pricing_arbitrage_free_surface(quote_date, vol_grid, k_grid, T_grid, N_
 
     # 3. Price American put options for the sampled k and T
     try:
-        prices = price_american_put_options_multi_KT(quote_date, vol_grid, K_grid, T_grid, sampled_KT)
+        # <--- 2. 傳入 S0
+        prices = price_american_put_options_multi_KT(quote_date, vol_grid, K_grid_exp, T_grid, sampled_KT, S0_for_date)
         # for (K, T), price in zip(sampled_KT, prices):
         #    print(f"K: {K}, T: {T}, Price: {price}")
     except Exception as e:
@@ -394,7 +395,7 @@ def process_var_to_grid(folder, year, k_grid, T_grid):
         #    continue  # for debugging
         print(f"Griding vol surface for quote date: {quote_date}")
         df_quote_date = pd.read_csv(f"{folder}/{year}/volatility_surface_{quote_date}.csv")
-        S0_for_date = df_quote_date["UNDERLYING_LAST"].iloc[0] # <--- 1. 提取 S0
+        S0_for_date = df_quote_date["UNDERLYING_LAST"].iloc[0] # <--- 已有 S0
 
         # simple grid
         total_var_grid = grid_total_variance(df_quote_date, k_grid, T_grid)
@@ -404,7 +405,8 @@ def process_var_to_grid(folder, year, k_grid, T_grid):
         #total_var_grid = clean_total_variance_butterfly_arbitrage(total_var_grid, k_grid, T_grid)
         vol_grid_from_totalvar = np.sqrt(total_var_grid / np.maximum(T_grid, 1e-6))  # Convert total variance to vol surface
         # test pricing see if it workds
-        testpass = test_pricing_arbitrage_free_surface(quote_date, vol_grid_from_totalvar, k_grid, T_grid)
+        # <--- 3. 傳入 S0
+        testpass = test_pricing_arbitrage_free_surface(quote_date, vol_grid_from_totalvar, k_grid, T_grid, S0_for_date) 
 
         if testpass:
             plot_total_var_grid(folder, year, quote_date, df_quote_date, k_grid, T_grid, total_var_grid)
@@ -416,30 +418,17 @@ def process_var_to_grid(folder, year, k_grid, T_grid):
             # continue
 
         vol_grid = grid_volatility_surface(df_quote_date, k_grid, T_grid)
-        vol_test_pass = test_pricing_arbitrage_free_surface(quote_date, vol_grid, k_grid, T_grid)
+         # <--- 4. 傳入 S0
+        vol_test_pass = test_pricing_arbitrage_free_surface(quote_date, vol_grid, k_grid, T_grid, S0_for_date)
         if vol_test_pass:
             plot_vol_grid(folder, year, quote_date, df_quote_date, k_grid, T_grid, vol_grid)
-            # <--- 2. 新增 S0 到儲存字典
             vol_grid_data_npz = {"k_grid": k_grid, "T_grid": T_grid, "vol_grid": vol_grid, "S0": S0_for_date} 
-            np.savez(f"{folder}/{year}/vol_grid_data_{quote_date}.npz", **vol_grid_data_npz) # <--- 3. 儲存
+            np.savez(f"{folder}/{year}/vol_grid_data_{quote_date}.npz", **vol_grid_data_npz) 
         else:
             vol_arb_date_count += 1
             print(f"Pricing test failed for vol surface on quote date {quote_date}, skipping saving vol grid data")
 
-        # plot_vol_and_variance_surface(folder, year, quote_date, df_quote_date, k_grid, T_grid, total_var_grid, vol_grid)
-        # Create a DataFrame with the grid data
-        """
-        if vol_grid is not None:
-            # Save flatten data to to CSV
-            grid_data = pd.DataFrame({"k_grid": np.tile(k_grid, len(T_grid)), "T_grid": np.repeat(T_grid, len(k_grid)), "vol_grid": total_var_grid.flatten()})
-            output_filename = f"{folder}/{year}/grid_data_{quote_date}.csv"
-            grid_data.to_csv(output_filename, index=False)
-            print(f"Grid data saved to {output_filename}")
-
-            # Save raw data to npz
-            grid_data_npz = {"k_grid": k_grid, "T_grid": T_grid, "vol_grid": vol_grid}
-            np.savez(f"{folder}/{year}/grid_data_{quote_date}.npz", **grid_data_npz)
-        """
+        # ... (函數的其餘部分保持不變) ...
     print(f"Total {var_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
     print(f"Total {vol_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
 
@@ -457,11 +446,13 @@ def post_process_grid_data(folder, year, k_grid, T_grid):
             print(f"File {vol_file} does not exist, skipping.")
             continue
         vol_grid_data = np.load(vol_file)
+        S0_for_date = vol_grid_data["S0"].item() # <--- 5. 載入 S0
 
-        test_pass = test_pricing_arbitrage_free_surface(quote_date, vol_grid_data["vol_grid"], vol_grid_data["k_grid"], vol_grid_data["T_grid"], N_sample=300)
+        # <--- 6. 傳入 S0
+        test_pass = test_pricing_arbitrage_free_surface(quote_date, vol_grid_data["vol_grid"], vol_grid_data["k_grid"], vol_grid_data["T_grid"], S0_for_date, N_sample=300)
         if test_pass:
             print(f"Post processing vol surface for quote date {quote_date} passed pricing test")
-            post_vol_grid_data_npz = {"k_grid": vol_grid_data["k_grid"], "T_grid": vol_grid_data["T_grid"], "vol_grid": vol_grid_data["vol_grid"]}
+            post_vol_grid_data_npz = {"k_grid": vol_grid_data["k_grid"], "T_grid": vol_grid_data["T_grid"], "vol_grid": vol_grid_data["vol_grid"], "S0": S0_for_date} # <--- 7. 再次儲存 S0
             np.savez(f"{folder}/{year}/post_vol_grid_data_{quote_date}.npz", **post_vol_grid_data_npz)
         else:
             vol_arb_date_count += 1
@@ -474,9 +465,11 @@ def post_process_grid_data(folder, year, k_grid, T_grid):
             print(f"File {total_var_file} does not exist, skipping.")
             continue
         total_var_grid_data = np.load(total_var_file)
+        # S0_for_date = total_var_grid_data["S0"].item() # <--- 如果要處理 var, 這裡也要載入
 
         vol_grid_from_totalvar = np.sqrt(total_var_grid_data["total_var_grid"] / np.maximum(T_grid, 1e-6))  # Convert total variance to
-        test_pass = test_pricing_arbitrage_free_surface(quote_date, vol_grid_from_totalvar, total_var_grid_data["k_grid"], total_var_grid_data["T_grid"], N_sample=30)
+        # <--- 8. 傳入 S0 (如果啟動這段)
+        # test_pass = test_pricing_arbitrage_free_surface(quote_date, vol_grid_from_totalvar, total_var_grid_data["k_grid"], total_var_grid_data["T_grid"], S0_for_date, N_sample=30)
         if test_pass:
             post_total_var_grid_data_npz = {"k_grid": total_var_grid_data["k_grid"], "T_grid": total_var_grid_data["T_grid"], "total_var_grid": total_var_grid_data["total_var_grid"]}
             np.savez(f"{folder}/{year}/post_total_var_grid_data_{quote_date}.npz", **post_total_var_grid_data_npz)
@@ -488,7 +481,6 @@ def post_process_grid_data(folder, year, k_grid, T_grid):
     print(f"var arb:{var_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
     print(f"vol arb: {vol_arb_date_count}/{len(all_quote_dates)} quote dates failed pricing test due to arbitrage issues")
     return var_arb_date_count, vol_arb_date_count
-
 
 ### ------------ pack vol surface data to npz for model training ------------- ###
 
