@@ -28,12 +28,12 @@ def main():
 
     if 1:
         print("Generating Asian Option training data...")
-        N_data = 100
+        N_data = 10000
         vol_data_path = f"../data_process/data_pack/{label}grid_train.npz"
         generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_type="train")
 
         print("Generating Asian Option test data...")
-        N_data = 20
+        N_data = 2000
         vol_data_path = f"../data_process/data_pack/{label}grid_test.npz"
         generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_type="test")
 
