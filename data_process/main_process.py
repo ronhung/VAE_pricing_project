@@ -88,7 +88,7 @@ def main():
         "2023q2",  # done
         "2023q3",  # done
         "2023q4",  # done
-    ][-14:-1]
+    ][-14:]
 
     """
     bad_dates_per_year = {
