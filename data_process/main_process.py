@@ -31,7 +31,7 @@ def main():
         "2023q2",  # done
         "2023q3",  # done
         "2023q4",  # done
-    ][-14:-1]:
+    ][-14:]:
         if 1:
             k_grid = np.linspace(-0.3, 0.3, 41)
             T_grid = np.linspace(0.05, 1.0, 20)
