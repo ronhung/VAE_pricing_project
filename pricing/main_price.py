@@ -16,8 +16,8 @@ def main():
         N_data = 20000
         #N_data = 20000
 
-        vol_data_path = f"../data_process/data_pack/{label}grid_train.npz"
-        generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_type="train")
+        # vol_data_path = f"../data_process/data_pack/{label}grid_train.npz"
+        # generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_type="train")
 
         print("Generating American Put training data...")
         N_data = 4000

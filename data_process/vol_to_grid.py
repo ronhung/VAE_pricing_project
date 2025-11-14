@@ -573,16 +573,7 @@ def pack_grid_data_to_npz(folder, label, grid_dict, k_grid, T_grid,  train_ratio
 
     print(f"Saved test data to {folder}/{label}grid_test.npz")
 
-    # Save test data
-    np.savez(
-        f"{folder}/{label}grid_test.npz",
-        quote_dates=test_dates,
-        surfaces_grid=test_grid_surfaces,
-        k_grid=k_grid,
-        T_grid=T_grid,
-    )
 
-    print(f"Saved test data to {folder}/{label}grid_test.npz")
 
 
 ## -------------- [end] pack vol surface data to npz for model training ------------- ###
