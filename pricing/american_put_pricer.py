@@ -29,22 +29,16 @@ def read_vol_data(path, label):
     S0s = data["S0s"] # <--- 1. 讀取 S0s
     return data, quote_dates, vol_surfaces, K_grid, T_grid, S0s # <--- 2. 回傳 S0s
 
-def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs, S0): # <--- 3. 接收 S0
+def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs, S0):
     """
     input: 1. (quote date, vol_surface), n (K,T)
     output: n NPV of american put options
     """
     # some constants
-    # S0 = 1.0 # <--- 4. 刪除硬編碼
+    # S0 由參數傳入
     r = 0.02
     q = 0.0
-    # K_grid is 41
-    # T_grid is 20
-    # K_mesh: 20*41
-    # vol_surface  is 41*20
-    print("np.shape(vol_surface), np.shape(K_grid), np.shape(T_grid)")
-    print(np.shape(vol_surface), np.shape(K_grid), np.shape(T_grid))
-
+    
     # environment setup
     today = ql.Date(*map(int, quote_date.split("-")[::-1]))
     ql.Settings.instance().evaluationDate = today
@@ -52,25 +46,18 @@ def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid,
     dayCounter = ql.Actual365Fixed()
 
     T_grid_expiry_dates = [today + int(T * 365 + 0.5) for T in T_grid]
-    exact_ts = [dayCounter.yearFraction(today, d) for d in T_grid_expiry_dates]
-
+    
     # build vol surface object
     volMatrix = ql.Matrix(len(K_grid), len(T_grid))
     for i in range(len(K_grid)):
         for j in range(len(T_grid)):
-            # volMatrix[i][j] = vol_surface[j, i] # previous
-            volMatrix[i][j] = vol_surface[i, j]  # after fix meshgrid order
+            volMatrix[i][j] = vol_surface[i, j]
 
-    # Adjust volMatrix to make internal variances match cleaned total_var exactly
-    for i in range(len(K_grid)):
-        for j in range(len(T_grid)):
-            if exact_ts[j] > 0:
-                adjustment_factor = np.sqrt(T_grid[j] / exact_ts[j])
-                volMatrix[i][j] *= adjustment_factor
-            else:
-                volMatrix[i][j] = 0.0  # Rare edge case for T=0
+    # !!! 修正點 1: Vol Surface 需要使用「絕對 Strike」來建立 !!!
+    # K_grid 目前是 Moneyness (K/S)，需要乘上 S0 變回絕對價格
+    Abs_K_grid = [k * S0 for k in K_grid] 
 
-    BlackSurf = ql.BlackVarianceSurface(today, calendar, T_grid_expiry_dates, K_grid, volMatrix, dayCounter)
+    BlackSurf = ql.BlackVarianceSurface(today, calendar, T_grid_expiry_dates, Abs_K_grid, volMatrix, dayCounter)
 
     volTS = ql.BlackVolTermStructureHandle(BlackSurf)
     volTS.enableExtrapolation()
@@ -80,24 +67,31 @@ def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid,
     divTS = ql.YieldTermStructureHandle(ql.FlatForward(today, q, dayCounter))
 
     process = ql.BlackScholesMertonProcess(spot, divTS, ratesTS, volTS)
-    engine = ql.FdBlackScholesVanillaEngine(process, 400, 400)  # numerical PDE engine
+    engine = ql.FdBlackScholesVanillaEngine(process, 400, 400)
 
     AmericanP_NPVs = []
     for i in range(len(eval_KTs)):
-        K = eval_KTs[i][0]
+        Moneyness = eval_KTs[i][0] # 這裡拿到的 K 其實是 Moneyness
         T = eval_KTs[i][1]
-        # print(f"Evaluating option {i+1}/{len(eval_KTs)}: K={K}, T={T}")
-        maturity = today + int(T * 365 + 0.5)  # no holidays, just add days
-        payoff = ql.PlainVanillaPayoff(ql.Option.Put, K)
+        
+        # !!! 修正點 2: Option Payoff 需要使用「絕對 Strike」 !!!
+        Abs_K = Moneyness * S0 
+        
+        maturity = today + int(T * 365 + 0.5)
+        payoff = ql.PlainVanillaPayoff(ql.Option.Put, Abs_K) # 使用 Abs_K
         exercise = ql.AmericanExercise(today, maturity)
         option = ql.VanillaOption(payoff, exercise)
         option.setPricingEngine(engine)
-        NPV = option.NPV()
-        # print(f"Quote date: {quote_date}, K: {K:.4f}, T: {T:.4f}, NPV: {NPV:.6f}")
+        
+        try:
+            NPV = option.NPV()
+        except RuntimeError:
+             # 如果插值失敗，給一個合理的值或 NaN (視情況而定)
+             NPV = 0.0 
+
         AmericanP_NPVs.append(NPV)
 
     return np.array(AmericanP_NPVs)
-
 
 def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_type="test"):
 

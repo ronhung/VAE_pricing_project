@@ -6,13 +6,13 @@ from american_put_pricer import read_vol_data
 # TODO: implement the Asian option pricer
 
 
-def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs, S0): # <--- 3. 接收 S0
+def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs, S0):
     """
     input: 1. (quote date, vol_surface), n (K,T)
     output: n NPV of Asian options
     """
     # some constants
-    # S0 = 1.0 # <--- 4. 刪除硬編碼
+    # S0 由參數傳入
     r = 0.02
     q = 0.0
 
@@ -29,18 +29,21 @@ def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KT
     volMatrix = ql.Matrix(len(K_grid), len(T_grid))
     for i in range(len(K_grid)):
         for j in range(len(T_grid)):
-            volMatrix[i][j] = vol_surface[i][j]
+            volMatrix[i][j] = vol_surface[i, j]
 
-    # Adjust volMatrix to make internal variances match cleaned total_var exactly
+    # Adjust volMatrix
     for i in range(len(K_grid)):
         for j in range(len(T_grid)):
             if exact_ts[j] > 0:
                 adjustment_factor = np.sqrt(T_grid[j] / exact_ts[j])
                 volMatrix[i][j] *= adjustment_factor
             else:
-                volMatrix[i][j] = 0.0  # Rare edge case for T=0
+                volMatrix[i][j] = 0.0
 
-    BlackSurf = ql.BlackVarianceSurface(today, calendar, T_grid_expiry_dates, K_grid, volMatrix, dayCounter)
+    # !!! 修正點 1: Vol Surface 使用絕對 Strike !!!
+    Abs_K_grid = [k * S0 for k in K_grid]
+
+    BlackSurf = ql.BlackVarianceSurface(today, calendar, T_grid_expiry_dates, Abs_K_grid, volMatrix, dayCounter)
 
     volTS = ql.BlackVolTermStructureHandle(BlackSurf)
     volTS.enableExtrapolation()
@@ -50,27 +53,32 @@ def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KT
     divTS = ql.YieldTermStructureHandle(ql.FlatForward(today, q, dayCounter))
 
     process = ql.BlackScholesMertonProcess(spot, divTS, ratesTS, volTS)
-    engine = ql.FdBlackScholesAsianEngine(process, tGrid=400, xGrid=400, aGrid=200)  # numerical PDE with Grid=200: Number of steps for the running average of the underlying asset’s price.
+    engine = ql.FdBlackScholesAsianEngine(process, tGrid=400, xGrid=400, aGrid=200)
 
     AsianC_NPVs = []
     AsianP_NPVs = []
     for i in range(len(eval_KTs)):
-        K = eval_KTs[i][0]
+        Moneyness = eval_KTs[i][0]
         T = eval_KTs[i][1]
+        
+        # !!! 修正點 2: Option Payoff 使用絕對 Strike !!!
+        Abs_K = Moneyness * S0
+
         # Create the Asian option
-        maturity = today + int(T * 365 + 0.5)  # no holidays, just add days
+        maturity = today + int(T * 365 + 0.5)
         average_type = ql.Average.Arithmetic
         exercise = ql.EuropeanExercise(maturity)
         pastFixings = 0
-        asianFixingDates = [today + x for x in range(1, int(T * 365 + 1))]  # daily fixings
+        asianFixingDates = [today + x for x in range(1, int(T * 365 + 1))]
+        
         # Call
-        call_payoff = ql.PlainVanillaPayoff(ql.Option.Call, K)
+        call_payoff = ql.PlainVanillaPayoff(ql.Option.Call, Abs_K) # 使用 Abs_K
         call_option = ql.DiscreteAveragingAsianOption(average_type, 0.0, pastFixings, asianFixingDates, call_payoff, exercise)
-
         call_option.setPricingEngine(engine)
         call_npv = call_option.NPV()
+        
         # Put
-        put_payoff = ql.PlainVanillaPayoff(ql.Option.Put, K)
+        put_payoff = ql.PlainVanillaPayoff(ql.Option.Put, Abs_K) # 使用 Abs_K
         put_option = ql.DiscreteAveragingAsianOption(average_type, 0.0, pastFixings, asianFixingDates, put_payoff, exercise)
         put_option.setPricingEngine(engine)
         put_npv = put_option.NPV()
