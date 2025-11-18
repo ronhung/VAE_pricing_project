@@ -293,11 +293,11 @@ class PricerTransformer(nn.Module):
                 # TAE 模型的架構參數 (必須與訓練時完全一致)
                 input_dim: int = 20, 
                 seq_len: int = 41,
-                d_model: int = 64, 
-                nhead: int = 4, 
-                num_encoder_layers: int = 3, 
-                num_decoder_layers: int = 3, 
-                dim_feedforward: int = 128
+                d_model: int = 128, 
+                nhead: int = 8, 
+                num_encoder_layers: int = 4, 
+                num_decoder_layers: int = 4, 
+                dim_feedforward: int = 512
                 ):
         super().__init__()
         self.latent_dim = latent_dim
