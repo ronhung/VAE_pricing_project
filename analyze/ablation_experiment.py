@@ -12,7 +12,7 @@ from VAE_model import Pricer as VAEPricer
 
 def run_ablation_study(
     folder="../data_process/data_pack",
-    product_type="AmericanPut",
+    product_type="AsianPut",
     latent_dim=10,
     batch_size=256
 ):
@@ -212,5 +212,5 @@ def run_ablation_study(
 
 if __name__ == "__main__":
     # 您可以修改這裡的參數來跑不同的產品
-    run_ablation_study(product_type="AmericanPut", latent_dim=10)
+    run_ablation_study(product_type="AsianPut", latent_dim=10)
     # run_ablation_study(product_type="AsianCall", latent_dim=10)
