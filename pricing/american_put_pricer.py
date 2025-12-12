@@ -96,10 +96,10 @@ def price_american_put_options_multi_KT(quote_date, vol_surface, K_grid, T_grid,
 def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_type="test"):
 
     # 1. read all vol data
-    data, quote_dates, vol_surfaces, K_grid, T_grid, S0s = read_vol_data(vol_data_path, label) # <--- 5. 接收 S0s
+    data, quote_dates, vol_surfaces, K_grid, T_grid, S0s = read_vol_data(vol_data_path, label)
     """
     data prepared
-    k_grid = np.linspace(-0.3, 0.3, 41)
+    k_grid = np.linspace(-0.3, 0.3, 41)  <-- 這裡是 log-moneyness
     T_grid = np.linspace(0.05, 1.0, 20)
     """
     # 2. n (K,T) to eval for each quote date
@@ -110,42 +110,59 @@ def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_
         n_per_date[i] += 1
     print("n_per_date", n_per_date)
 
-    all_AmericanP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []} # <--- 6. 新增 S0 欄位
+    all_AmericanP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []}
     arb_date = []
 
-    # Set random seed for reproducible sampling (same as in test_pricing_arbitrage_free_surface)
+    # Set random seed for reproducible sampling
     np.random.seed(42)
 
-    for i in range(len(quote_dates)):
-        # Use same sampling strategy as test_pricing_arbitrage_free_surface
-        K_min, K_max = min(K_grid), max(K_grid)
-        T_min, T_max = min(T_grid), max(T_grid)
+    # !!! 修正 1: 計算 Moneyness (exp空間) 的範圍 !!!
+    # K_grid 是 log-moneyness (-0.3, 0.3)，我們要採樣的是 Moneyness (0.74, 1.35)
+    K_min_exp = np.exp(np.min(K_grid))
+    K_max_exp = np.exp(np.max(K_grid))
+    
+    # T 不需要轉換
+    T_min, T_max = np.min(T_grid), np.max(T_grid)
 
-        eval_Ks = np.random.uniform(K_min, K_max, size=n_per_date[i])
+    for i in range(len(quote_dates)):
+        # !!! 修正 2: 使用 exp 轉換後的範圍採樣 !!!
+        eval_Ks = np.random.uniform(K_min_exp, K_max_exp, size=n_per_date[i])
         eval_Ts = np.random.uniform(T_min, T_max, size=n_per_date[i])
 
-        # ... (此處省略了註解掉的 if/elif dataset_type 區塊) ...
-
         eval_KTs = [[K, T] for K, T in zip(eval_Ks, eval_Ts)]
+        
         if n_per_date[i] == 0:
             continue
-        print(f"Evaluating {n_per_date[i]} (K,T) for quote date {quote_dates[i]}")
-        S0_for_date = S0s[i] # <--- 7. 取得當天的 S0
+            
+        # print(f"Evaluating {n_per_date[i]} (K,T) for quote date {quote_dates[i]}")
+        S0_for_date = S0s[i]
 
         try:
-            AmericanP_NPVS = price_american_put_options_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs, S0_for_date) # <--- 8. 傳入 S0
+            # 注意: 這裡傳入的 eval_KTs 中的 K 已經是 Moneyness (0.7~1.3) 了
+            # 所以 price_american_put_options_multi_KT 裡的 Abs_K = Moneyness * S0 邏輯就會變正確
+            AmericanP_NPVS = price_american_put_options_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs, S0_for_date)
         except Exception as e:
             print(f"Error processing quote date {quote_dates[i]}: {e}")
             arb_date.append(quote_dates[i])
             continue
-        print("AmericanP_NPVS", AmericanP_NPVS)
+        
+        # print("AmericanP_NPVS", AmericanP_NPVS)
+        
         for j in range(len(AmericanP_NPVS)):
+            npv = AmericanP_NPVS[j]
+            
+            # !!! 修正 3: 資料清洗 - 過濾無效價格 !!!
+            if np.isnan(npv) or np.isinf(npv) or npv < 0:
+                # print(f"Warning: Invalid price (NPV={npv}) at index {j} for date {quote_dates[i]}, skipping.")
+                continue 
+
             all_AmericanP_NPVS_data["quote_date"].append(quote_dates[i])
             all_AmericanP_NPVS_data["vol_surface"].append(vol_surfaces[i])
             all_AmericanP_NPVS_data["K"].append(eval_KTs[j][0])
             all_AmericanP_NPVS_data["T"].append(eval_KTs[j][1])
-            all_AmericanP_NPVS_data["NPV"].append(AmericanP_NPVS[j])
-            all_AmericanP_NPVS_data["S0"].append(S0_for_date) # <--- 9. 儲存 S0
+            all_AmericanP_NPVS_data["NPV"].append(npv)
+            all_AmericanP_NPVS_data["S0"].append(S0_for_date)
+
     print(f"Processed {len(all_AmericanP_NPVS_data['quote_date'])} American put options.")
     print("error dates:", len(arb_date), arb_date)
 
@@ -157,7 +174,7 @@ def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_
         K=all_AmericanP_NPVS_data["K"],
         T=all_AmericanP_NPVS_data["T"],
         NPV=all_AmericanP_NPVS_data["NPV"],
-        UNDERLYING_LAST=all_AmericanP_NPVS_data["S0"], # <--- 10. 存入 NPZ
+        UNDERLYING_LAST=all_AmericanP_NPVS_data["S0"],
     )
-    print(f"American put data with {N_data} samples saved to {folder}/AmericanPut_pricing_data_{dataset_type}.npz")
-    return 0
+    print(f"American put data with {len(all_AmericanP_NPVS_data['NPV'])} samples saved to {folder}/AmericanPut_pricing_data_{dataset_type}.npz")
+    return
