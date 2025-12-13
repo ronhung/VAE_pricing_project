@@ -6,10 +6,10 @@ from torch.utils.data import Subset
 def main():
     folder = "../data_process/data_pack"
     ld = 10
-    if 1:
+    if 0:
         train_and_save_VAE_alone(folder, latent_dim=ld, num_epochs=100)
 
-    if 1:
+    if 0:
         train_and_save_pricer(folder, product_type="AmericanPut", vae_model_path=f"{folder}/vae_state_dict.pt", latent_dim=ld, pricing_param_dim=2, num_epochs=150, num_epochs_fine_tune=50)
         plot_predict_prices_from_vol_surface_and_params(
             folder=folder,
@@ -21,7 +21,7 @@ def main():
         )
         plot_loss_curves(folder, product_type="AmericanPut")
 
-    if 1:
+    if 0:
         train_and_save_pricer(folder, product_type="AsianCall", vae_model_path=f"{folder}/vae_state_dict.pt", latent_dim=ld, pricing_param_dim=2, num_epochs=150, num_epochs_fine_tune=50)
         plot_predict_prices_from_vol_surface_and_params(
             folder=folder,

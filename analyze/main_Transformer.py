@@ -31,7 +31,7 @@ def main():
         plot_tae_loss_curves(folder) # 繪製 TAE 自身的損失曲線
         print("--- TAE 模型訓練完成 ---")
 
-    if 1:
+    if 0:
         # 步驟 2: 訓練 AmericanPut 定價器
         print("--- 訓練 AmericanPut Pricer (TAE) ---")
         # CHANGED:

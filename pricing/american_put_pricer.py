@@ -118,8 +118,8 @@ def generate_AmericanPut_data_set(folder, N_data, vol_data_path, label, dataset_
 
     # !!! 修正 1: 計算 Moneyness (exp空間) 的範圍 !!!
     # K_grid 是 log-moneyness (-0.3, 0.3)，我們要採樣的是 Moneyness (0.74, 1.35)
-    K_min_exp = np.exp(np.min(K_grid))
-    K_max_exp = np.exp(np.max(K_grid))
+    K_min_exp = np.min(K_grid) 
+    K_max_exp = np.max(K_grid)
     
     # T 不需要轉換
     T_min, T_max = np.min(T_grid), np.max(T_grid)

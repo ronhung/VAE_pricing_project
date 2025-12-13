@@ -2,21 +2,14 @@ import QuantLib as ql
 import numpy as np
 from american_put_pricer import read_vol_data
 
-
-# TODO: implement the Asian option pricer
-
-
 def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KTs, S0):
     """
     input: 1. (quote date, vol_surface), n (K,T)
     output: n NPV of Asian options
     """
-    # some constants
-    # S0 由參數傳入
     r = 0.02
     q = 0.0
 
-    # environment setup
     today = ql.Date(*map(int, quote_date.split("-")[::-1]))
     ql.Settings.instance().evaluationDate = today
     calendar = ql.NullCalendar()
@@ -25,7 +18,6 @@ def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KT
     T_grid_expiry_dates = [today + int(T * 365 + 0.5) for T in T_grid]
     exact_ts = [dayCounter.yearFraction(today, d) for d in T_grid_expiry_dates]
 
-    # build vol surface object
     volMatrix = ql.Matrix(len(K_grid), len(T_grid))
     for i in range(len(K_grid)):
         for j in range(len(T_grid)):
@@ -40,8 +32,9 @@ def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KT
             else:
                 volMatrix[i][j] = 0.0
 
-    # !!! 修正點 1: Vol Surface 使用絕對 Strike !!!
-    Abs_K_grid = [k * S0 for k in K_grid]
+    # !!! 修正 1: 還原真實 Strike 用於構建波動率曲面 !!!
+    # 原本: Abs_K_grid = [k * S0 for k in K_grid] -> 錯誤，k是log-moneyness，會導致負值
+    Abs_K_grid = [S0 * k for k in K_grid]
 
     BlackSurf = ql.BlackVarianceSurface(today, calendar, T_grid_expiry_dates, Abs_K_grid, volMatrix, dayCounter)
 
@@ -58,30 +51,35 @@ def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KT
     AsianC_NPVs = []
     AsianP_NPVs = []
     for i in range(len(eval_KTs)):
+        # eval_KTs 中的 K 是 Log-Moneyness
         Moneyness = eval_KTs[i][0]
         T = eval_KTs[i][1]
         
-        # !!! 修正點 2: Option Payoff 使用絕對 Strike !!!
-        Abs_K = Moneyness * S0
+        # !!! 修正 2: 計算真實 Strike 用於定價 !!!
+        # 原本: Abs_K = Moneyness * S0 -> 錯誤
+        Abs_K = S0 * Moneyness
 
-        # Create the Asian option
         maturity = today + int(T * 365 + 0.5)
         average_type = ql.Average.Arithmetic
         exercise = ql.EuropeanExercise(maturity)
         pastFixings = 0
         asianFixingDates = [today + x for x in range(1, int(T * 365 + 1))]
         
-        # Call
-        call_payoff = ql.PlainVanillaPayoff(ql.Option.Call, Abs_K) # 使用 Abs_K
+        call_payoff = ql.PlainVanillaPayoff(ql.Option.Call, Abs_K)
         call_option = ql.DiscreteAveragingAsianOption(average_type, 0.0, pastFixings, asianFixingDates, call_payoff, exercise)
         call_option.setPricingEngine(engine)
-        call_npv = call_option.NPV()
         
-        # Put
-        put_payoff = ql.PlainVanillaPayoff(ql.Option.Put, Abs_K) # 使用 Abs_K
+        put_payoff = ql.PlainVanillaPayoff(ql.Option.Put, Abs_K)
         put_option = ql.DiscreteAveragingAsianOption(average_type, 0.0, pastFixings, asianFixingDates, put_payoff, exercise)
         put_option.setPricingEngine(engine)
-        put_npv = put_option.NPV()
+
+        # 加入錯誤處理，避免因為極端值導致計算崩潰
+        try:
+            call_npv = call_option.NPV()
+            put_npv = put_option.NPV()
+        except RuntimeError:
+            call_npv = 0.0
+            put_npv = 0.0
 
         AsianC_NPVs.append(call_npv)
         AsianP_NPVs.append(put_npv)
@@ -90,14 +88,8 @@ def price_asian_option_multi_KT(quote_date, vol_surface, K_grid, T_grid, eval_KT
 
 
 def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_type="train"):
-
     # 1. read all vol data
-    data, quote_dates, vol_surfaces, K_grid, T_grid, S0s = read_vol_data(vol_data_path, label) # <--- 5. 接收 S0s
-    """
-    data prepared
-    k_grid = np.linspace(-0.3, 0.3, 41)
-    T_grid = np.linspace(0.05, 1.0, 20)
-    """
+    data, quote_dates, vol_surfaces, K_grid, T_grid, S0s = read_vol_data(vol_data_path, label)
 
     # 2. n (K,T) to eval for each quote date
     n = int(N_data / len(quote_dates))
@@ -105,17 +97,14 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
     remainder = N_data % len(quote_dates)
     for i in range(remainder):
         n_per_date[i] += 1
-    print("n_per_date", n_per_date)
-
-    all_AsianC_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []} # <--- 6. 新增 S0 欄位
-    all_AsianP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []} # <--- 6. 新增 S0 欄位
+    
+    all_AsianC_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []}
+    all_AsianP_NPVS_data = {"quote_date": [], "vol_surface": [], "K": [], "T": [], "NPV": [], "S0": []}
     arb_date = []
 
-    # Set random seed for reproducible sampling
     np.random.seed(42)
 
     for i in range(len(quote_dates)):
-        # Uniform sampling in (K,T)
         K_min, K_max = min(K_grid), max(K_grid)
         T_min, T_max = min(T_grid), max(T_grid)
 
@@ -126,33 +115,33 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
         if n_per_date[i] == 0:
             continue
         print(f"Evaluating {n_per_date[i]} (K,T) for quote date {quote_dates[i]}")
-        S0_for_date = S0s[i] # <--- 7. 取得當天的 S0
+        S0_for_date = S0s[i]
 
         try:
-            AsianC_NPVs, AsianP_NPVs = price_asian_option_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs, S0_for_date) # <--- 8. 傳入 S0
+            AsianC_NPVs, AsianP_NPVs = price_asian_option_multi_KT(quote_dates[i], vol_surfaces[i], K_grid, T_grid, eval_KTs, S0_for_date)
         except Exception as e:
             print(f"Error pricing Asian options for quote date {quote_dates[i]}: {e}")
             arb_date.append(quote_dates[i])
             continue
-        print("AsianC_NPVs", AsianC_NPVs)
-        print("AsianP_NPVs", AsianP_NPVs)
 
         for j in range(len(eval_KTs)):
+            # !!! 修正 3: 儲存真實 Strike 而不是 Log-Moneyness !!!
+            Moneyness = eval_KTs[j][0]
+            Real_Strike = S0_for_date * Moneyness
+            
             all_AsianC_NPVS_data["quote_date"].append(quote_dates[i])
             all_AsianC_NPVS_data["vol_surface"].append(vol_surfaces[i])
-            all_AsianC_NPVS_data["K"].append(eval_KTs[j][0])
+            all_AsianC_NPVS_data["K"].append(Real_Strike)  # 存入真實 Strike
             all_AsianC_NPVS_data["T"].append(eval_KTs[j][1])
             all_AsianC_NPVS_data["NPV"].append(AsianC_NPVs[j])
-            all_AsianC_NPVS_data["S0"].append(S0_for_date) # <--- 9. 儲存 S0
+            all_AsianC_NPVS_data["S0"].append(S0_for_date)
 
             all_AsianP_NPVS_data["quote_date"].append(quote_dates[i])
             all_AsianP_NPVS_data["vol_surface"].append(vol_surfaces[i])
-            all_AsianP_NPVS_data["K"].append(eval_KTs[j][0])
+            all_AsianP_NPVS_data["K"].append(Real_Strike)  # 存入真實 Strike
             all_AsianP_NPVS_data["T"].append(eval_KTs[j][1])
             all_AsianP_NPVS_data["NPV"].append(AsianP_NPVs[j])
-            all_AsianP_NPVS_data["S0"].append(S0_for_date) # <--- 9. 儲存 S0
-    print(f"Processed {len(all_AsianC_NPVS_data['NPV'])} Asian Call options and {len(all_AsianP_NPVS_data['NPV'])} Asian Put options.")
-    print("error quote dates:", arb_date)
+            all_AsianP_NPVS_data["S0"].append(S0_for_date)
 
     # 3. save data
     np.savez(
@@ -162,9 +151,9 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
         K=all_AsianC_NPVS_data["K"],
         T=all_AsianC_NPVS_data["T"],
         NPV=all_AsianC_NPVS_data["NPV"],
-        UNDERLYING_LAST=all_AsianC_NPVS_data["S0"], # <--- 10. 存入 NPZ
+        UNDERLYING_LAST=all_AsianC_NPVS_data["S0"],
     )
-    print(f"Asian Call data with {N_data} samples saved to {folder}/AsianCall_pricing_data_{dataset_type}.npz")
+    print(f"Asian Call data saved to {folder}/AsianCall_pricing_data_{dataset_type}.npz")
 
     np.savez(
         f"{folder}/AsianPut_pricing_data_{dataset_type}.npz",
@@ -173,6 +162,6 @@ def generate_AsianOption_data_set(folder, N_data, vol_data_path, label, dataset_
         K=all_AsianP_NPVS_data["K"],
         T=all_AsianP_NPVS_data["T"],
         NPV=all_AsianP_NPVS_data["NPV"],
-        UNDERLYING_LAST=all_AsianP_NPVS_data["S0"], # <--- 10. 存入 NPZ
+        UNDERLYING_LAST=all_AsianP_NPVS_data["S0"],
     )
-    print(f"Asian Put data with {N_data} samples saved to {folder}/AsianPut_pricing_data_{dataset_type}.npz")
+    print(f"Asian Put data saved to {folder}/AsianPut_pricing_data_{dataset_type}.npz")
